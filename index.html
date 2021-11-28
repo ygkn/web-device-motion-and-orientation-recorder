@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Web Device Motion and Orientation Recorder</title>
+    <link rel="stylesheet" href="https://unpkg.com/ress/dist/ress.min.css" />
+    <style>
+      @keyframes pluse {
+        to {
+          opacity: 0;
+        }
+      }
+
+      body {
+        font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN",
+          "Hiragino Sans", Meiryo, sans-serif;
+      }
+
+      html,
+      body,
+      .container {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+      }
+
+      .container {
+        max-width: 80ch;
+        margin: 0 auto;
+      }
+
+      .stack > * + * {
+        margin-top: 1.5rem;
+      }
+
+      .title {
+        text-align: center;
+      }
+
+      .record-button {
+        display: flex;
+        flex-direction: column;
+        padding: 1rem;
+        width: 100%;
+        align-items: center;
+        border-radius: 0.5rem;
+      }
+
+      .record-button:focus {
+        box-shadow: inset 0 0 0 0.25rem rgb(255 0 0 / 50%);
+      }
+
+      .record-button__circle {
+        display: inline-block;
+        background: red;
+        aspect-ratio: 1;
+        width: 100%;
+        max-width: 8em;
+        border-radius: 100%;
+        border: solid 0.25rem red;
+        transition: background 0.2s;
+        display: grid;
+        place-items: center;
+      }
+
+      .record-button.--recording .record-button__circle {
+        background: rgb(255 0 0 /0);
+        animation: pluse 1s linear alternate infinite;
+      }
+
+      .record-button__square {
+        display: inline-block;
+        background: red;
+        aspect-ratio: 1;
+        width: 50%;
+        border-radius: 0.25rem;
+      }
+
+      .time {
+        text-align: center;
+        font-family: monospace;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .download {
+        text-align: center;
+      }
+
+      .count {
+        text-align: center;
+      }
+
+      .download__link:not([href]),
+      .download__link[href=""] {
+        display: none;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="container stack">
+      <h1 class="title">Web Device Motion and Orientation Recorder</h1>
+
+      <button class="record-button stack">
+        <span class="record-button__circle" aria-hidden="true">
+          <span class="record-button__square"></span>
+        </span>
+        <span class="record-button__text">RECORD</span>
+      </button>
+
+      <p class="time">--:--:--</p>
+
+      <p class="count">Not recorded yet</p>
+
+      <p class="download">
+        <a class="download__link" download="record.json">DOWNLOAD JSON</a>
+      </p>
+    </div>
+
+    <script>
+      const recordButton = document.querySelector(".record-button");
+      const recordButtonText = document.querySelector(".record-button__text");
+      const timer = document.querySelector(".time");
+
+      const downloadLink = document.querySelector(".download__link");
+
+      const counter = document.querySelector(".count");
+
+      const recordingClass = "--recording";
+
+      let startTimeStamp = null;
+      let recordingData = null;
+
+      const recordedData = [];
+
+      const handleOrientation = (event) => {
+        recordingData?.orientations.push(
+          pickProperty(event, [
+            "absolute",
+            "alpha",
+            "beta",
+            "gamma",
+            "timeStamp",
+          ])
+        );
+      };
+      const handleMotion = (event) => {
+        recordingData?.motions.push({
+          acceleration: pickProperty(event.acceleration, ["x", "y", "z"]),
+          accelerationIncludingGravity: pickProperty(
+            event.accelerationIncludingGravity,
+            ["x", "y", "z"]
+          ),
+          rotationRate: pickProperty(event.rotationRate, [
+            "alpha",
+            "beta",
+            "gamma",
+          ]),
+          ...pickProperty(event, ["interval", "timeStamp"]),
+        });
+      };
+
+      const pickProperty = (obj, keys) =>
+        Object.fromEntries(keys.map((key) => [key, obj[key]]));
+
+      // for iOS 13+
+      const requestPermissions = async () => {
+        if (
+          DeviceMotionEvent &&
+          typeof DeviceMotionEvent.requestPermission === "function"
+        ) {
+          const permission = await DeviceMotionEvent.requestPermission();
+          if (permission === "denied") {
+            alert("please grant 🥺");
+          }
+        }
+
+        if (
+          DeviceOrientationEvent &&
+          typeof DeviceOrientationEvent.requestPermission === "function"
+        ) {
+          const permission = await DeviceOrientationEvent.requestPermission();
+          if (permission === "denied") {
+            alert("please grant 🥺");
+          }
+        }
+      };
+
+      if (
+        typeof DeviceMotionEvent === "undefined" ||
+        typeof DeviceOrientationEvent === "undefined"
+      ) {
+        alert("Not supported 🥺");
+      }
+
+      recordButton.addEventListener("click", async (event) => {
+        if (recordingData === null) {
+          recordButton.classList.add(recordingClass);
+
+          recordingData = {
+            startTimeStamp: event.timeStamp,
+            endTimeStamp: null,
+            motions: [],
+            orientations: [],
+          };
+
+          recordButtonText.innerText = "STOP";
+          updateTimer(event.timeStamp);
+
+          if (downloadLink.href !== "") {
+            URL.revokeObjectURL(downloadLink.href);
+            downloadLink.href = "";
+          }
+
+          await requestPermissions();
+
+          window.addEventListener("deviceorientation", handleOrientation, true);
+          window.addEventListener("devicemotion", handleMotion, true);
+        } else {
+          recordButton.classList.remove(recordingClass);
+
+          recordingData.endTimeStamp = event.timeStamp;
+          recordedData.push(recordingData);
+
+          recordingData = null;
+
+          recordButtonText.innerText = "RECORD";
+          startTimeStamp = null;
+
+          const content = JSON.stringify(recordedData);
+          const blob = new Blob([content], { type: "application/json" });
+          downloadLink.href = URL.createObjectURL(blob);
+
+          if (recordedData.length === 1) {
+            counter.innerText = "Recorded once";
+          } else if (recordedData.length === 2) {
+            counter.innerText = "Recorded twice";
+          } else {
+            counter.innerText = `Recorded ${recordedData.length} times`;
+          }
+
+          window.removeEventListener(
+            "deviceorientation",
+            handleOrientation,
+            true
+          );
+
+          window.removeEventListener("devicemotion", handleMotion, true);
+        }
+      });
+
+      const to2Digits = (num) => Math.floor(num).toFixed().padStart(2, "0");
+
+      const updateTimer = (timeStamp) => {
+        if (startTimeStamp === null) {
+          return;
+        }
+
+        const diffMs = Math.floor(timeStamp - startTimeStamp);
+        const diffCs = to2Digits((diffMs / 10) % 100);
+        const diffSec = to2Digits((diffMs / 1000) % 60);
+        const diffMin = to2Digits((diffMs / (1000 * 60)) % 60);
+
+        timer.innerText = `${diffMin}:${diffSec}:${diffCs}`;
+
+        requestAnimationFrame(updateTimer);
+      };
+    </script>
+  </body>
+</html>
